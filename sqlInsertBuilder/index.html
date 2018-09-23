@@ -1,0 +1,199 @@
+<html xmlns="http://www.w3.org/1999/xhtml">
+    <head>
+        <meta charset="UTF-8">
+        <script src="https://code.jquery.com/jquery-3.3.1.min.js" integrity="sha256-FgpCb/KJQlLNfOu91ta32o/NMZxltwRo8QtmkMRdAu8=" crossorigin="anonymous"></script>
+    </head>
+
+    <body>
+        <div style="margin-bottom: 20px;">
+            <input type="text" id="table_name" autofocus placeholder="Table name" onkeyup="refresh_snippet();" autocomplete="off" />
+        </div>
+        <div>
+            <button id="add_row" onclick="dt_add_row();">Add Row</button>
+            <button id="add_column" onclick="dt_add_column();">Add Column</button>
+        </div>
+        <div>
+            <table id="tbl" border="1">
+                <tr>
+                    <th style="background-color: #c3c3c3; padding: 5px;">
+                        <input type="text" name="column_1" placeholder="column1_name" onkeyup="refresh_snippet();" autocomplete="off" />
+                    </th>
+                </tr>
+                <tr>
+                    <td>
+                        <input type="text" name="value_11" placeholder="value" onkeyup="refresh_snippet();" autocomplete="off" />
+                    </td>
+                </tr>
+            </table>
+        </div>
+        <div style="display: inline-grid; width: 80%; margin-top: 20px;">
+            <textarea id="sql" style="overflow:hidden;" autocomplete="off" readonly placeholder="SQL"></textarea>
+            <button id="btn_copy" onclick="copy_sql();">Copy</button>
+            <span id="info_copy" style="text-align: center; font-size: x-small; opacity: 0; color: green;">Copied</span>
+        </div>
+
+        <script type="text/javascript">
+            function dt_add_row(){
+                let column_count = $("#tbl").find("th").length;
+                let row_count = $("#tbl").find("tr").length - 1;
+
+                let table = $("#tbl").find("tbody");
+                let row = table.find("tr:last").clone();
+                row.find("td").each(function(index) {
+                    $(this).find("input:first").attr("name", "value_" + (index+1) + (row_count + 1));
+                    $(this).find("input:first").val("");
+                });
+
+                table.append(row);
+            }
+
+            function dt_add_column() {
+                let column_count = $("#tbl").find("th").length;
+                let row_count = $("#tbl").find("tr").length - 1;
+
+                let header_cell = $("#tbl").find("tr:first").find("th:first").clone();
+                header_cell.find("input:first").attr("name", "column_" + (column_count+1));
+                header_cell.find("input:first").attr("placeholder", "column_" + (column_count+1) + "_name");
+                header_cell.find("input:first").val("");
+
+                $("#tbl").find("tr:first").append(header_cell);
+
+                $("#tbl").find("tr:not(:first)").each(function(index) {
+                    let cell = $(this).find("td:first").clone();
+                    cell.find("input:first").attr("name", "value_" + (index+1) + (row_count + 1));
+                    cell.find("input:first").val("");
+                    $(this).append(cell);
+                });
+            }
+
+            function refresh_snippet() {
+                let columns = $("#tbl").find("tr:first").find("th").find("input").map(function(index) {
+                    let v = clrstr($(this).val());
+                    $(this).val(v);
+                    return v;
+                }).toArray();
+
+                let dataToInsert = {};
+
+                for(let i in columns) {
+                    dataToInsert[columns[i]] = $("#tbl").find("tr:not(:first)").map(function(index) {
+                        let input = $(this).find('input:eq(' + i + ')');
+                        let v = clrstr(input.val());
+                        input.val(v);
+                        return v;
+                    }).toArray();
+                }
+
+                let inp_table_name = $("#table_name");
+                let table_name = clrstr(inp_table_name.val());
+                inp_table_name.val(table_name);
+                let sql = build_sql(table_name, dataToInsert);
+                $("#sql").text(sql);
+
+                textarea_autosize();
+            }
+            
+            function textarea_autosize() {
+                var el = document.getElementById("sql");
+                el.style.height = "auto";
+                el.style.padding = "0";
+
+                el.style.height = el.scrollHeight + 'px';
+            }
+
+            // column_data = {column_name: [value1, value2, ...], ...}
+            function build_sql(table_name, column_data) {
+                let column_name_array =[];
+                
+                for (let column_name in column_data) {
+                    if (column_data.hasOwnProperty(column_name) && clrstr(column_name.length) > 0) {
+                        column_name_array.push(column_name);
+                    }
+                }
+
+                let sql = '';
+                if(column_name_array.length > 0) {
+                    let tname = "[" + table_name + "]";
+                    let tname_insert = table_name + "_to_insert";
+                    let tname_existing = table_name + "_existing";
+
+                    sql += "INSERT INTO " + tname + "(" + column_name_array.join(', ') + ")\n";
+                    sql += "SELECT " + tname_insert + ".*\n";
+                    sql += "FROM (\n";
+
+                    let insert_rows = [];
+                    for (let i = 0; i < column_data[column_name_array[0]].length; i++) {
+                        let insert_row = [];
+                        for (let j in column_name_array) {
+                            let val = clrstr(column_data[column_name_array[j]][i]);
+                            if(!isNumber(val)) {
+                                val = "'" + val + "'";
+                            }
+                            insert_row.push(val + " AS " + column_name_array[j]);
+                        }
+                        insert_rows.push("    SELECT " + insert_row.join(", ") + '  /**/\n');
+                    }
+                    sql += insert_rows.join("    UNION\n");
+
+                    sql += ") AS " + tname_insert + "\n";
+                    sql += "LEFT JOIN " + tname + " AS " + tname_existing + "\n";
+                    sql += "    ON 1=1\n";
+                    for (let i in column_name_array) {
+                        sql += "    AND " + tname_existing + "." + column_name_array[i] + " = " + tname_insert + "." + column_name_array[i] + "\n";
+                    }
+
+                    sql += "WHERE 1=1\n";
+                    for (let i in column_name_array) {
+                        sql += "    AND " + tname_existing + "." + column_name_array[i] + " IS NULL\n";
+                    }
+                }
+                return sql;
+            }
+
+            function copy_sql() {
+                let copyText = document.getElementById("sql");
+                copyText.select();
+                document.execCommand("copy");
+                deselectAll();
+
+                $("#info_copy")
+                    .stop(true, true)
+                    .animate({
+                        opacity: '1'
+                    }, 500)
+                    .delay(300)
+                    .animate({
+                        opacity: '0'
+                    }, 300);
+            }
+
+            function deselectAll() {
+                var element = document.activeElement;
+
+                if (element && /INPUT|TEXTAREA/i.test(element.tagName)) {
+                    if ('selectionStart' in element) {
+                        element.selectionEnd = element.selectionStart;
+                    }
+                    element.blur();
+                }
+
+                if (window.getSelection) { // All browsers, except IE <=8
+                    window.getSelection().removeAllRanges();
+                } else if (document.selection) { // IE <=8
+                    document.selection.empty();
+                }
+            }
+
+            function isNumber(n) {
+                return !isNaN(parseFloat(n)) && isFinite(n);
+            }
+
+            function trim(str) {
+                return $.trim(str);
+            }
+            function clrstr(str) {
+                return trim(str).replace(/'/g, '');
+            }
+        </script>
+    </body>
+</html>
